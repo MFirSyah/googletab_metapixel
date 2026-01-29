@@ -19,27 +19,20 @@ def format_idr(value):
     return f"Rp {value:,.0f}"
 
 # --- FUNGSI 1: "THE BOSS MODE" (MOCK API CONNECTION) ---
-# Fungsi ini mensimulasikan koneksi ke Google & Meta
-# Nanti jika Mas Matthew sudah kasih API Key, logika request asli ditaruh di sini.
 def fetch_data_from_api(secrets):
     with st.spinner('🔄 Sedang menghubungi server Google Ads & Meta...'):
-        time.sleep(1.5) # Simulasi loading biar terlihat "real"
+        time.sleep(1.5) # Simulasi loading
         
-        # Di sini nanti tempat codingan asli library google-ads / facebook-business sdk
-        # Karena sekarang belum ada API Key valid, kita generate data "Real-time" dummy
-        # agar dashboard tidak error dan Mas Matthew bisa lihat previewnya.
-        
+        # Simulasi Data Dummy (Backup jika API belum connect)
         dates = pd.date_range(end=datetime.today(), periods=7).tolist()
         data = []
         for date in dates:
-            # Simulasi Data Google (Diambil via "API")
             data.append({
                 'Date': date, 'Platform': 'Google Ads', 
                 'Campaign': 'Search - Laptop Gaming', 
                 'Spend': 500000 + np.random.randint(-50000, 50000), 
                 'Impressions': 2000, 'Clicks': 150, 'Conversions': 8, 'Revenue': 85000000
             })
-            # Simulasi Data Meta (Diambil via "API")
             data.append({
                 'Date': date, 'Platform': 'Meta Ads', 
                 'Campaign': 'Retargeting - Promo', 
@@ -52,53 +45,54 @@ def fetch_data_from_api(secrets):
 # --- FUNGSI 2: AUTO-DETECT COLUMN (UNTUK CSV) ---
 def process_uploaded_file(uploaded_file):
     try:
-        # Baca file (CSV atau Excel)
+        # Baca file sesuai format
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
         
         # LOGIKA DETEKSI KOLOM (FINGERPRINTING)
-        cols = [c.lower() for c in df.columns] # Lowercase semua biar aman
+        cols = [c.lower() for c in df.columns] 
         
         # 1. Deteksi Format Google Ads
         if any('cost' in c for c in cols) or any('avg. cpc' in c for c in cols):
-            st.toast("✅ Terdeteksi: Format Data Google Ads", icon="🔵")
             # Standarisasi Nama Kolom
             rename_map = {
                 'Day': 'Date', 'Cost': 'Spend', 'Total conv. value': 'Revenue', 
                 'Conv. value': 'Revenue'
             }
-            # Tambahkan kolom Platform jika tidak ada
+            # Tambahkan kolom Platform
             df['Platform'] = 'Google Ads'
             
         # 2. Deteksi Format Meta Ads
         elif any('amount spent' in c for c in cols) or any('reach' in c for c in cols):
-            st.toast("✅ Terdeteksi: Format Data Meta Ads", icon="🔵")
             # Standarisasi Nama Kolom
             rename_map = {
                 'Amount Spent (IDR)': 'Spend', 'Amount Spent': 'Spend',
                 'Website Purchase Conversion Value': 'Revenue',
                 'Link Clicks': 'Clicks'
             }
-            # Tambahkan kolom Platform jika tidak ada
-            df['Platform'] = 'Meta Ads'
+            # Tambahkan kolom Platform
+            # Jika belum ada nama khusus, set default Meta Ads
+            if 'Platform' not in df.columns:
+                df['Platform'] = 'Meta Ads'
         
         else:
-            st.warning("⚠️ Format kolom tidak dikenali otomatis. Mencoba membaca apa adanya.")
             rename_map = {}
 
         # Lakukan Rename
         df = df.rename(columns=rename_map)
         
-        # Pastikan kolom Date berformat tanggal
+        # --- FIX: PARSING TANGGAL (PENTING!) ---
         if 'Date' in df.columns:
-            df['Date'] = pd.to_datetime(df['Date'])
+            # dayfirst=True memaksa baca format DD/MM/YYYY (Format Indo)
+            # errors='coerce' mengubah tanggal ngawur jadi NaT (Not a Time) biar gak error
+            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
             
         return df
 
     except Exception as e:
-        st.error(f"Gagal memproses file: {e}")
+        st.error(f"Gagal memproses file {uploaded_file.name}: {e}")
         return None
 
 # --- SIDEBAR NAVIGASI ---
@@ -109,8 +103,7 @@ with st.sidebar:
     data_source = st.radio(
         "Sumber Data:",
         ("🔌 Koneksi API (Real-time)", "📂 Upload File Manual (CSV)"),
-        index=0,
-        help="Gunakan API untuk data otomatis. Gunakan Upload jika API belum siap."
+        index=0
     )
     
     st.divider()
@@ -119,45 +112,56 @@ with st.sidebar:
 # --- LOGIKA UTAMA (MAIN LOGIC) ---
 df_final = None
 
-# A. JIKA MEMILIH MODE API (DEFAULT)
+# A. MODE API
 if data_source == "🔌 Koneksi API (Real-time)":
     st.title("📡 Live Ads Monitoring (API Mode)")
     
-    # Cek apakah Secret sudah disetting di "Brankas" Streamlit
-    # Ini kuncinya "The Boss Mode", cek file secrets.toml
     if "api_credentials" in st.secrets:
-        # Jika Ada Secret -> Langsung Tarik Data
         if st.button("🔄 Refresh Data Terbaru", type="primary"):
             df_final = fetch_data_from_api(st.secrets["api_credentials"])
             st.success("Data berhasil diperbarui dari server!")
         else:
-            # Tampilan awal sebelum klik tombol
-            st.info("Tekan tombol di atas untuk menarik data terbaru dari Google & Meta.")
-            
+            st.info("Tekan tombol di atas untuk menarik data terbaru.")
     else:
-        # Jika Secret BELUM Ada (Graceful Fallback)
-        st.warning("⚠️ API Credential belum ditemukan di sistem.")
-        st.markdown("""
-        **Status:** Sistem siap, namun kunci akses (API Key) belum terdeteksi di server.
-        
-        **Saran Tindakan:**
-        1. Masukkan API Key Google & Meta ke pengaturan *Secrets* di Streamlit Cloud.
-        2. Atau, gunakan mode **'Upload File Manual'** di sidebar kiri untuk sementara.
-        """)
+        st.warning("⚠️ API Credential belum ditemukan.")
+        st.markdown("Sistem siap. Silakan gunakan mode **Upload File Manual** jika API Key belum tersedia.")
 
-# B. JIKA MEMILIH MODE UPLOAD CSV
+# B. MODE UPLOAD CSV (MULTI-FILE SUPPORT)
 elif data_source == "📂 Upload File Manual (CSV)":
     st.title("📂 Analisis Data Manual")
-    uploaded_file = st.file_uploader("Upload Report Export (Google/Meta)", type=['csv', 'xlsx'])
     
-    if uploaded_file:
-        df_final = process_uploaded_file(uploaded_file)
-        if df_final is not None:
-            st.success("File berhasil diproses!")
+    # Perubahan: accept_multiple_files=True
+    uploaded_files = st.file_uploader(
+        "Upload Report Export (Bisa pilih 3 file sekaligus: Google, Pixel 1, Pixel 2)", 
+        type=['csv', 'xlsx'], 
+        accept_multiple_files=True
+    )
+    
+    if uploaded_files:
+        all_dataframes = []
+        with st.spinner('Sedang menggabungkan data...'):
+            for file in uploaded_files:
+                processed_df = process_uploaded_file(file)
+                if processed_df is not None:
+                    # Tambahan: Kasih label file asal jika Platform belum terdeteksi spesifik
+                    # Biar Pixel 1 dan Pixel 2 gak kecampur jadi satu "Meta Ads" doang
+                    if 'Platform' in processed_df.columns and processed_df['Platform'].iloc[0] == 'Meta Ads':
+                        # Deteksi manual sederhana berdasarkan nama file
+                        if 'internal' in file.name.lower() or 'pixel_1' in file.name.lower():
+                            processed_df['Platform'] = 'Meta Ads (Internal)'
+                        elif 'agency' in file.name.lower() or 'pixel_2' in file.name.lower():
+                            processed_df['Platform'] = 'Meta Ads (Agency)'
+                    
+                    all_dataframes.append(processed_df)
+                    st.toast(f"✅ Berhasil memuat: {file.name}", icon="📄")
+        
+        # Gabungkan semua file jadi satu tabel besar
+        if all_dataframes:
+            df_final = pd.concat(all_dataframes, ignore_index=True)
+            st.success(f"Berhasil menggabungkan {len(uploaded_files)} file data!")
 
 # --- VISUALISASI DASHBOARD ---
-# Kode di bawah ini hanya jalan kalau df_final SUDAH ADA isinya
-if df_final is not None:
+if df_final is not None and not df_final.empty:
     
     # 1. Pastikan kolom numerik aman
     cols_to_numeric = ['Spend', 'Revenue', 'Clicks', 'Conversions', 'Impressions']
@@ -165,13 +169,13 @@ if df_final is not None:
         if col in df_final.columns:
             df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
 
-    # 2. Hitung ROAS & KPI
+    # 2. Hitung ROAS & KPI Total
     if 'Revenue' in df_final.columns and 'Spend' in df_final.columns:
         total_spend = df_final['Spend'].sum()
         total_revenue = df_final['Revenue'].sum()
+        # Hindari pembagian dengan nol
         total_roas = total_revenue / total_spend if total_spend > 0 else 0
         
-        # Menghitung CTR & CPA jika kolom tersedia
         total_clicks = df_final['Clicks'].sum() if 'Clicks' in df_final.columns else 0
         total_impr = df_final['Impressions'].sum() if 'Impressions' in df_final.columns else 0
         ctr = (total_clicks / total_impr * 100) if total_impr > 0 else 0
@@ -181,13 +185,13 @@ if df_final is not None:
     # --- BAGIAN A: SCORECARD KPI ---
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Ad Spend", format_idr(total_spend), delta="Biaya Keluar")
+        st.metric("Total Ad Spend", format_idr(total_spend), delta="Total Biaya")
     with col2:
-        st.metric("Total Revenue", format_idr(total_revenue), delta="Omzet Masuk", delta_color="normal")
+        st.metric("Total Revenue", format_idr(total_revenue), delta="Total Omzet")
     with col3:
-        st.metric("ROAS (Return On Ad Spend)", f"{total_roas:.2f}x", delta="Target: >10x")
+        st.metric("ROAS (Efisiensi)", f"{total_roas:.2f}x", delta="Target: >10x")
     with col4:
-        st.metric("Avg. CTR", f"{ctr:.2f}%", help="Rata-rata Click-Through Rate")
+        st.metric("Avg. CTR", f"{ctr:.2f}%")
 
     # --- BAGIAN B: GRAFIK VISUAL ---
     st.write("### 📊 Analisis Performa")
@@ -195,43 +199,46 @@ if df_final is not None:
     tab1, tab2, tab3 = st.tabs(["Perbandingan Platform", "Tren Harian", "Scatter Plot"])
     
     with tab1:
-        # Grafik Batang: Google vs Meta
         if 'Platform' in df_final.columns:
+            # Agregasi per Platform
+            platform_summary = df_final.groupby('Platform')[['Spend', 'Revenue']].sum().reset_index()
+            # Hitung ROAS per platform buat label
+            platform_summary['ROAS'] = platform_summary['Revenue'] / platform_summary['Spend']
+            
             fig_bar = px.bar(
-                df_final.groupby('Platform')[['Spend', 'Revenue']].sum().reset_index(),
+                platform_summary,
                 x='Platform', y=['Spend', 'Revenue'],
                 barmode='group',
-                title="Google Ads vs Meta Ads: Spend vs Revenue",
-                color_discrete_sequence=['#ff6b6b', '#1dd1a1']
+                title="Google Ads vs Meta Ads: Mana yang Lebih Cuan?",
+                color_discrete_sequence=['#ff6b6b', '#1dd1a1'],
+                hover_data=['ROAS']
             )
             st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.info("Kolom 'Platform' tidak terdeteksi untuk perbandingan.")
+            st.info("Kolom 'Platform' tidak terdeteksi.")
 
     with tab2:
-        # Grafik Garis: Tren Harian
         if 'Date' in df_final.columns:
-            daily_data = df_final.groupby('Date')[['Revenue']].sum().reset_index()
+            # Agregasi per Tanggal dan Platform (biar garisnya pisah)
+            daily_data = df_final.groupby(['Date', 'Platform'])[['Revenue']].sum().reset_index()
             fig_line = px.line(
-                daily_data, x='Date', y='Revenue',
-                title="Tren Omzet Harian",
+                daily_data, x='Date', y='Revenue', color='Platform',
+                title="Tren Omzet Harian per Platform",
                 markers=True, line_shape='spline'
             )
-            fig_line.update_traces(line_color='#54a0ff', line_width=3)
             st.plotly_chart(fig_line, use_container_width=True)
         else:
-            st.info("Kolom 'Date' tidak terdeteksi untuk tren waktu.")
+            st.info("Kolom 'Date' tidak terdeteksi.")
             
     with tab3:
-        # Scatter Plot: Efisiensi
         if 'Clicks' in df_final.columns and 'Conversions' in df_final.columns:
              fig_scatter = px.scatter(
                  df_final, x='Spend', y='Revenue', size='Conversions', color='Platform',
-                 title="Efisiensi Biaya: Semakin ke kiri atas, semakin bagus",
+                 title="Efisiensi Biaya (Makin besar bola = Makin banyak penjualan)",
                  hover_data=['Campaign'] if 'Campaign' in df_final.columns else None
              )
              st.plotly_chart(fig_scatter, use_container_width=True)
 
     # --- BAGIAN C: DATA TABLE ---
-    with st.expander("🔍 Lihat Data Mentah"):
-        st.dataframe(df_final, use_container_width=True)
+    with st.expander("🔍 Lihat Data Mentah Gabungan"):
+        st.dataframe(df_final.sort_values(by='Date', ascending=False), use_container_width=True)
