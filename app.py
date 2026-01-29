@@ -176,35 +176,38 @@ if df_final is not None and not df_final.empty:
     
     st.divider()
 
-    # --- INSIGHT OTOMATIS (DESKRIPSI ALASAN) ---
+    # --- INSIGHT OTOMATIS (REVISI LEBIH FRIENDLY) ---
     if 'Platform' in df_filtered.columns and not df_filtered.empty:
         summary = df_filtered.groupby('Platform')[['Spend', 'Revenue', 'Conversions']].sum().reset_index()
         summary['ROAS'] = summary['Revenue'] / summary['Spend']
         
-        # Urutkan dari ROAS tertinggi
         summary_sorted = summary.sort_values(by='ROAS', ascending=False)
         best = summary_sorted.iloc[0]
         
-        # Logika Deskripsi Alasan
-        alasan = ""
-        if len(summary_sorted) > 1:
-            second_best = summary_sorted.iloc[1]
-            diff_roas = best['ROAS'] - second_best['ROAS']
-            alasan = f"""
-            **Alasan Pendukung:**
-            * **Efisiensi Tinggi:** ROAS-nya mencapai **{best['ROAS']:.2f}x**, unggul {diff_roas:.2f} poin dibandingkan {second_best['Platform']} ({second_best['ROAS']:.2f}x).
-            * **Kontribusi Omzet:** Menghasilkan total revenue **{format_idr(best['Revenue'])}** dari biaya iklan {format_idr(best['Spend'])}.
-            * **Bisa dilihat pada:** Grafik 'Perbandingan Head-to-Head' di bawah, batang {best['Platform']} menunjukkan rasio pendapatan tertinggi dibanding biaya.
-            """
-        else:
-            alasan = "Merupakan satu-satunya platform yang aktif pada periode ini."
-
         st.subheader("💡 Insight & Rekomendasi")
-        st.info(f"""
-        **🏆 Yang lebih cuan adalah: {best['Platform']}**
         
-        {alasan}
-        """)
+        # Gunakan Container agar terkotak rapi
+        with st.container(border=True):
+            # Header Insight yang Catchy
+            st.markdown(f"### 🏆 Yang lebih cuan adalah : **{best['Platform']}**")
+            
+            if len(summary_sorted) > 1:
+                second_best = summary_sorted.iloc[1]
+                diff_roas = best['ROAS'] - second_best['ROAS']
+                
+                # Penjelasan Friendly & Deskriptif
+                st.markdown(f"""
+                Platform ini terbukti paling pinter muterin duit iklan kita minggu ini. 
+                Secara sederhana, performa **{best['Platform']}** jauh lebih efisien dibanding yang lain.
+                
+                **Kenapa dia juara?**
+                * 💰 **Efisiensi Tinggi:** ROAS-nya tembus **{best['ROAS']:.2f}x**. Ini jauh lebih tinggi dibanding {second_best['Platform']} yang cuma dapet {second_best['ROAS']:.2f}x.
+                * 📈 **Mesin Omzet:** Cuma keluar biaya {format_idr(best['Spend'])}, tapi berhasil bawa pulang omzet **{format_idr(best['Revenue'])}**.
+                
+                👀 **Bisa dilihat pada:** Grafik **'Perbandingan Biaya vs Hasil'** di bawah (Tab 1). Perhatikan batang {best['Platform']} yang warna hijaunya (Revenue) melesat jauh lebih tinggi dibanding batang merahnya (Spend).
+                """)
+            else:
+                 st.markdown("Saat ini hanya ada satu platform yang aktif, jadi dialah pemenangnya! Belum ada pembanding untuk melihat efisiensi relatif.")
     
     # --- GRAFIK ---
     tab1, tab2, tab3 = st.tabs(["📊 Perbandingan Head-to-Head", "📈 Tren Harian & Detail", "🎯 Scatter Plot (Analisis Lanjut)"])
@@ -301,14 +304,6 @@ if df_final is not None and not df_final.empty:
                 labels={'Spend': 'Biaya Iklan (Cost)', 'Revenue': 'Omzet (Revenue)'},
                 title="Peta Sebaran Efektifitas Iklan"
             )
-            
-            # Tambah garis diagonal ROAS 10x (Target Hijau)
-            max_val = max(df_filtered['Spend'].max(), df_filtered['Revenue'].max())
-            if max_val > 0:
-                fig_scatter.add_shape(type="line", x0=0, y0=0, x1=max_val/10, y1=max_val,
-                                    line=dict(color="Green", width=1, dash="dot"))
-                fig_scatter.add_annotation(x=max_val/10, y=max_val, text="Garis Target (ROAS 10x)", 
-                                         showarrow=False, yshift=10, font=dict(color="Green"))
             
             st.plotly_chart(fig_scatter, use_container_width=True)
         else:
