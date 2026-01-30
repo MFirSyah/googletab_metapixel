@@ -19,7 +19,6 @@ def format_idr(value):
     return f"Rp {value:,.0f}"
 
 def format_idr_short(value):
-    # Format angka besar jadi ringkas (1 Juta -> 1.0Jt, 1 Ribu -> 1k)
     if value >= 1000000000:
         return f"{value/1000000000:.1f}M"
     elif value >= 1000000:
@@ -35,21 +34,18 @@ def fetch_data_from_api(secrets):
         dates = pd.date_range(end=datetime.today(), periods=14).tolist()
         data = []
         for date in dates:
-            # Simulasi Data Google
             data.append({
                 'Date': date, 'Platform': 'Google Ads', 
                 'Campaign': 'Search - Laptop Gaming', 
                 'Spend': 500000 + np.random.randint(-50000, 50000), 
                 'Impressions': 2000, 'Clicks': 150, 'Conversions': 8, 'Revenue': 85000000
             })
-            # Simulasi Data Meta Internal
             data.append({
                 'Date': date, 'Platform': 'Meta Ads (Internal)', 
                 'Campaign': 'Awareness - Promo', 
                 'Spend': 300000 + np.random.randint(-20000, 20000), 
                 'Impressions': 15000, 'Clicks': 300, 'Conversions': 2, 'Revenue': 5000000
             })
-            # Simulasi Data Meta Agency
             data.append({
                 'Date': date, 'Platform': 'Meta Ads (Agency)', 
                 'Campaign': 'Retargeting - Cart', 
@@ -61,7 +57,6 @@ def fetch_data_from_api(secrets):
 # --- FUNGSI 2: PROCESS CSV ---
 def process_uploaded_file(uploaded_file):
     try:
-        # Baca file
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
@@ -70,15 +65,25 @@ def process_uploaded_file(uploaded_file):
         cols = [c.lower() for c in df.columns] 
         detected_platform = None
         
-        # 1. Deteksi Google Ads (Cek kolom Cost/CPC)
-        if any('cost' in c for c in cols) or any('avg. cpc' in c for c in cols):
+        # --- PERBAIKAN LOGIKA DETEKSI (Swap Order) ---
+        # Cek Meta Ads DULUAN karena kolomnya lebih spesifik ('amount spent')
+        # Ini mencegah Meta Agency (yg punya kolom 'CPC Cost') terdeteksi sebagai Google
+        
+        # 1. Deteksi Meta Ads
+        if any('amount spent' in c for c in cols) or any('reach' in c for c in cols):
+            rename_map = {
+                'Amount Spent (IDR)': 'Spend', 'Amount Spent': 'Spend', 
+                'Website Purchase Conversion Value': 'Revenue', 
+                'Link Clicks': 'Clicks',
+                'CPM (Cost per 1000 Impressions)': 'CPM', # Mapping tambahan biar aman
+                'CPC (Cost per Link Click)': 'CPC'
+            }
+            detected_platform = 'Meta Ads'
+            
+        # 2. Deteksi Google Ads (Cek cost/cpc jika bukan Meta)
+        elif any('cost' in c for c in cols) or any('avg. cpc' in c for c in cols):
             rename_map = {'Day': 'Date', 'Cost': 'Spend', 'Total conv. value': 'Revenue', 'Conv. value': 'Revenue'}
             detected_platform = 'Google Ads'
-            
-        # 2. Deteksi Meta Ads (Cek kolom Amount Spent)
-        elif any('amount spent' in c for c in cols) or any('reach' in c for c in cols):
-            rename_map = {'Amount Spent (IDR)': 'Spend', 'Amount Spent': 'Spend', 'Website Purchase Conversion Value': 'Revenue', 'Link Clicks': 'Clicks'}
-            detected_platform = 'Meta Ads' # Nama sementara, nanti diperjelas di loop
         else:
             rename_map = {}
 
@@ -138,18 +143,17 @@ elif data_source == "📂 Upload File Manual (CSV)":
         for file in uploaded_files:
             processed = process_uploaded_file(file)
             if processed is not None:
-                # --- LOGIKA DETEKSI INTERNAL VS AGENCY (REVISI KUAT) ---
-                # Cek dulu apakah ini Meta Ads
+                # --- LOGIKA LABELING (Tetap sama) ---
                 current_platform = processed['Platform'].iloc[0] if 'Platform' in processed.columns else 'Unknown'
                 fname = file.name.lower()
                 
+                # Hanya ubah label jika terdeteksi sebagai Meta
                 if 'Meta' in current_platform:
                     if 'internal' in fname or 'pixel_1' in fname:
                         processed['Platform'] = 'Meta Ads (Internal)'
                     elif 'agency' in fname or 'pixel_2' in fname:
                         processed['Platform'] = 'Meta Ads (Agency)'
                     else:
-                        # Jika tidak ada kata kunci, beri label umum + nama file biar ketahuan
                         processed['Platform'] = f'Meta Ads ({file.name})'
                 
                 dfs.append(processed)
@@ -173,15 +177,20 @@ if df_final is not None and not df_final.empty:
         min_d = df_final['Date'].min().date()
         max_d = df_final['Date'].max().date()
         try:
-            date_range = st.sidebar.date_input("Pilih Periode:", value=(min_d, max_d), min_value=min_d, max_value=max_d)
-            if len(date_range) == 2:
-                start_date, end_date = date_range
-                mask = (df_final['Date'].dt.date >= start_date) & (df_final['Date'].dt.date <= end_date)
-                df_filtered = df_final.loc[mask]
-            else:
+            # Gunakan try-except untuk handle kasus tanggal yang mungkin error
+            if pd.isna(min_d) or pd.isna(max_d):
+                st.sidebar.warning("Format tanggal tidak valid pada data.")
                 df_filtered = df_final
+            else:
+                date_range = st.sidebar.date_input("Pilih Periode:", value=(min_d, max_d), min_value=min_d, max_value=max_d)
+                if len(date_range) == 2:
+                    start_date, end_date = date_range
+                    mask = (df_final['Date'].dt.date >= start_date) & (df_final['Date'].dt.date <= end_date)
+                    df_filtered = df_final.loc[mask]
+                else:
+                    df_filtered = df_final
         except:
-            df_filtered = df_final
+             df_filtered = df_final
     else:
         df_filtered = df_final
 
@@ -236,11 +245,9 @@ if df_final is not None and not df_final.empty:
         st.write("#### Perbandingan Biaya vs Hasil (Spend vs Revenue)")
         if 'Platform' in df_filtered.columns:
             
-            # Hitung ROAS per platform untuk label
             platform_stats = df_filtered.groupby('Platform')[['Spend', 'Revenue']].sum().reset_index()
             platform_stats['ROAS_Val'] = platform_stats['Revenue'] / platform_stats['Spend']
             
-            # Melt data
             summary_melted = platform_stats.melt(
                 id_vars=['Platform', 'ROAS_Val'], 
                 value_vars=['Spend', 'Revenue'], 
@@ -248,13 +255,11 @@ if df_final is not None and not df_final.empty:
                 value_name='Value'
             )
             
-            # Custom Label: Menampilkan ROAS DI ATAS Bar Revenue
             def create_label(row):
                 val_short = format_idr_short(row['Value'])
                 if row['Metric'] == 'Revenue':
-                    # Baris 1: Angka Revenue, Baris 2: ROAS
                     return f"{val_short}<br><b>(ROAS {row['ROAS_Val']:.1f}x)</b>"
-                return val_short # Untuk Spend cuma nilai uangnya aja
+                return val_short
             
             summary_melted['Text_Label'] = summary_melted.apply(create_label, axis=1)
             
@@ -267,13 +272,11 @@ if df_final is not None and not df_final.empty:
                 title="Komparasi Spend vs Revenue"
             )
             
-            # TEKNIS: Pakai 'outside' dan set y-axis lebih tinggi biar tulisan gak kepotong
             fig_bar.update_traces(textposition='outside')
             
-            # Trik biar label ROAS gak kepotong di atas grafik
             max_y = summary_melted['Value'].max()
             fig_bar.update_layout(
-                yaxis_range=[0, max_y * 1.2], # Tambah ruang kosong 20% di atas
+                yaxis_range=[0, max_y * 1.2],
                 margin=dict(t=50)
             )
             
