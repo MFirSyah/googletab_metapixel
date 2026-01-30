@@ -35,18 +35,21 @@ def fetch_data_from_api(secrets):
         dates = pd.date_range(end=datetime.today(), periods=14).tolist()
         data = []
         for date in dates:
+            # Simulasi Data Google
             data.append({
                 'Date': date, 'Platform': 'Google Ads', 
                 'Campaign': 'Search - Laptop Gaming', 
                 'Spend': 500000 + np.random.randint(-50000, 50000), 
                 'Impressions': 2000, 'Clicks': 150, 'Conversions': 8, 'Revenue': 85000000
             })
+            # Simulasi Data Meta Internal
             data.append({
                 'Date': date, 'Platform': 'Meta Ads (Internal)', 
                 'Campaign': 'Awareness - Promo', 
                 'Spend': 300000 + np.random.randint(-20000, 20000), 
                 'Impressions': 15000, 'Clicks': 300, 'Conversions': 2, 'Revenue': 5000000
             })
+            # Simulasi Data Meta Agency
             data.append({
                 'Date': date, 'Platform': 'Meta Ads (Agency)', 
                 'Campaign': 'Retargeting - Cart', 
@@ -58,40 +61,41 @@ def fetch_data_from_api(secrets):
 # --- FUNGSI 2: PROCESS CSV ---
 def process_uploaded_file(uploaded_file):
     try:
+        # Baca file
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
         
         cols = [c.lower() for c in df.columns] 
-        
-        # Logika Deteksi Platform
         detected_platform = None
         
-        # Cek Google Ads
+        # 1. Deteksi Google Ads (Cek kolom Cost/CPC)
         if any('cost' in c for c in cols) or any('avg. cpc' in c for c in cols):
             rename_map = {'Day': 'Date', 'Cost': 'Spend', 'Total conv. value': 'Revenue', 'Conv. value': 'Revenue'}
             detected_platform = 'Google Ads'
             
-        # Cek Meta Ads
+        # 2. Deteksi Meta Ads (Cek kolom Amount Spent)
         elif any('amount spent' in c for c in cols) or any('reach' in c for c in cols):
             rename_map = {'Amount Spent (IDR)': 'Spend', 'Amount Spent': 'Spend', 'Website Purchase Conversion Value': 'Revenue', 'Link Clicks': 'Clicks'}
-            detected_platform = 'Meta Ads' # Default name, nanti di-refine di loop upload
+            detected_platform = 'Meta Ads' # Nama sementara, nanti diperjelas di loop
         else:
             rename_map = {}
 
+        # Rename Kolom
         df = df.rename(columns=rename_map)
         
-        # Assign platform jika belum ada kolomnya
+        # Assign platform dasar
         if 'Platform' not in df.columns and detected_platform:
             df['Platform'] = detected_platform
         
+        # Fix Tanggal
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
             
         return df
     except Exception as e:
-        st.error(f"Error pada file {uploaded_file.name}: {e}")
+        st.error(f"Gagal memproses file {uploaded_file.name}: {e}")
         return None
 
 # --- SIDEBAR ---
@@ -99,6 +103,15 @@ with st.sidebar:
     st.header("🎛️ Panel Kontrol")
     data_source = st.radio("Sumber Data:", ("🔌 Koneksi API (Real-time)", "📂 Upload File Manual (CSV)"))
     st.divider()
+    
+    if data_source == "📂 Upload File Manual (CSV)":
+        st.info("""
+        **Aturan Nama File Upload:**
+        * **Google:** Bebas (terdeteksi otomatis).
+        * **Internal:** Nama file wajib ada kata `internal` atau `pixel_1`.
+        * **Agency:** Nama file wajib ada kata `agency` atau `pixel_2`.
+        """)
+        
     st.caption("Developed by Firman (Data Science)")
 
 # --- MAIN LOGIC ---
@@ -109,7 +122,7 @@ if data_source == "🔌 Koneksi API (Real-time)":
     if "api_credentials" in st.secrets:
         if st.button("🔄 Refresh Data Terbaru", type="primary"):
             df_final = fetch_data_from_api(st.secrets["api_credentials"])
-            st.success("Data updated!")
+            st.success("Data berhasil ditarik dari server!")
         else:
             st.info("Tekan tombol di atas untuk menarik data terbaru.")
     else:
@@ -125,45 +138,42 @@ elif data_source == "📂 Upload File Manual (CSV)":
         for file in uploaded_files:
             processed = process_uploaded_file(file)
             if processed is not None:
-                # --- LOGIKA PEMISAHAN NAMA FILE (REVISI) ---
-                # Memastikan Meta Ads Internal & Agency tidak tercampur
+                # --- LOGIKA DETEKSI INTERNAL VS AGENCY (REVISI KUAT) ---
+                # Cek dulu apakah ini Meta Ads
                 current_platform = processed['Platform'].iloc[0] if 'Platform' in processed.columns else 'Unknown'
+                fname = file.name.lower()
                 
                 if 'Meta' in current_platform:
-                    fname = file.name.lower()
                     if 'internal' in fname or 'pixel_1' in fname:
                         processed['Platform'] = 'Meta Ads (Internal)'
                     elif 'agency' in fname or 'pixel_2' in fname:
                         processed['Platform'] = 'Meta Ads (Agency)'
-                    # Kalau nama file netral, biarkan 'Meta Ads'
+                    else:
+                        # Jika tidak ada kata kunci, beri label umum + nama file biar ketahuan
+                        processed['Platform'] = f'Meta Ads ({file.name})'
                 
                 dfs.append(processed)
+        
         if dfs:
             df_final = pd.concat(dfs, ignore_index=True)
 
 # PROCESS DATA
 if df_final is not None and not df_final.empty:
     
-    # 1. Bersihkan Data Numerik
+    # 1. Cleaning Numerik
     num_cols = ['Spend', 'Revenue', 'Clicks', 'Conversions', 'Impressions']
     for col in num_cols:
         if col in df_final.columns:
             df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
 
-    # 2. FILTER TANGGAL (SIDEBAR)
+    # 2. Filter Tanggal
     st.sidebar.divider()
     st.sidebar.subheader("📅 Filter Tanggal")
     if 'Date' in df_final.columns:
         min_d = df_final['Date'].min().date()
         max_d = df_final['Date'].max().date()
-        
         try:
-            date_range = st.sidebar.date_input(
-                "Pilih Periode:",
-                value=(min_d, max_d),
-                min_value=min_d,
-                max_value=max_d
-            )
+            date_range = st.sidebar.date_input("Pilih Periode:", value=(min_d, max_d), min_value=min_d, max_value=max_d)
             if len(date_range) == 2:
                 start_date, end_date = date_range
                 mask = (df_final['Date'].dt.date >= start_date) & (df_final['Date'].dt.date <= end_date)
@@ -171,19 +181,18 @@ if df_final is not None and not df_final.empty:
             else:
                 df_filtered = df_final
         except:
-            st.sidebar.error("Silakan pilih tanggal awal dan akhir.")
             df_filtered = df_final
     else:
         df_filtered = df_final
 
-    # 3. Hitung KPI (Data Terfilter)
+    # 3. Hitung KPI Total
     tot_spend = df_filtered['Spend'].sum()
     tot_rev = df_filtered['Revenue'].sum()
     tot_roas = tot_rev / tot_spend if tot_spend > 0 else 0
     
-    # --- UI DASHBOARD ---
+    # --- DASHBOARD UI ---
     
-    # KPI SCORECARD
+    # A. KPI SCORECARD
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Biaya (Spend)", format_idr(tot_spend))
     c2.metric("Total Omzet (Revenue)", format_idr(tot_rev))
@@ -192,16 +201,14 @@ if df_final is not None and not df_final.empty:
     
     st.divider()
 
-    # --- INSIGHT OTOMATIS ---
+    # B. INSIGHT OTOMATIS
     if 'Platform' in df_filtered.columns and not df_filtered.empty:
         summary = df_filtered.groupby('Platform')[['Spend', 'Revenue', 'Conversions']].sum().reset_index()
         summary['ROAS'] = summary['Revenue'] / summary['Spend']
-        
         summary_sorted = summary.sort_values(by='ROAS', ascending=False)
         best = summary_sorted.iloc[0]
         
         st.subheader("💡 Insight & Rekomendasi")
-        
         with st.container(border=True):
             st.markdown(f"### 🏆 Yang lebih cuan adalah : **{best['Platform']}**")
             
@@ -220,20 +227,20 @@ if df_final is not None and not df_final.empty:
                 👀 **Bisa dilihat pada:** Grafik **'Perbandingan Biaya vs Hasil'** di bawah (Tab 1). Perhatikan batang {best['Platform']} yang warna hijaunya (Revenue) melesat jauh lebih tinggi dibanding batang merahnya (Spend).
                 """)
             else:
-                 st.markdown("Saat ini hanya ada satu platform yang aktif, jadi dialah pemenangnya! Belum ada pembanding untuk melihat efisiensi relatif.")
-    
-    # --- GRAFIK ---
+                 st.markdown("Saat ini hanya ada satu platform yang aktif dalam data upload.")
+
+    # C. GRAFIK TABS
     tab1, tab2, tab3 = st.tabs(["📊 Perbandingan Head-to-Head", "📈 Tren Harian & Detail", "🎯 Scatter Plot (Analisis Lanjut)"])
     
     with tab1:
         st.write("#### Perbandingan Biaya vs Hasil (Spend vs Revenue)")
         if 'Platform' in df_filtered.columns:
             
-            # 1. Hitung ROAS per platform dulu untuk ditempel jadi label
+            # Hitung ROAS per platform untuk label
             platform_stats = df_filtered.groupby('Platform')[['Spend', 'Revenue']].sum().reset_index()
             platform_stats['ROAS_Val'] = platform_stats['Revenue'] / platform_stats['Spend']
             
-            # 2. Melt data agar bisa jadi grouped bar chart
+            # Melt data
             summary_melted = platform_stats.melt(
                 id_vars=['Platform', 'ROAS_Val'], 
                 value_vars=['Spend', 'Revenue'], 
@@ -241,28 +248,34 @@ if df_final is not None and not df_final.empty:
                 value_name='Value'
             )
             
-            # 3. Buat Custom Label: Kalau Revenue, tempelkan nilai ROAS-nya
+            # Custom Label: Menampilkan ROAS DI ATAS Bar Revenue
             def create_label(row):
                 val_short = format_idr_short(row['Value'])
                 if row['Metric'] == 'Revenue':
-                    # Menampilkan ROAS tepat di atas batang Revenue
-                    return f"{val_short}<br>(ROAS {row['ROAS_Val']:.1f}x)"
-                return val_short
+                    # Baris 1: Angka Revenue, Baris 2: ROAS
+                    return f"{val_short}<br><b>(ROAS {row['ROAS_Val']:.1f}x)</b>"
+                return val_short # Untuk Spend cuma nilai uangnya aja
             
             summary_melted['Text_Label'] = summary_melted.apply(create_label, axis=1)
             
-            # 4. Gambar Grafik
             fig_bar = px.bar(
                 summary_melted, 
                 x='Platform', y='Value', color='Metric',
                 barmode='group',
                 text='Text_Label', 
-                color_discrete_sequence=['#ff6b6b', '#1dd1a1'], # Merah (Spend), Hijau (Revenue)
-                title="Komparasi Spend vs Revenue (Plus Info ROAS)"
+                color_discrete_sequence=['#ff6b6b', '#1dd1a1'],
+                title="Komparasi Spend vs Revenue"
             )
             
+            # TEKNIS: Pakai 'outside' dan set y-axis lebih tinggi biar tulisan gak kepotong
             fig_bar.update_traces(textposition='outside')
-            fig_bar.update_layout(margin=dict(t=60)) # Margin atas agak lebar biar teks muat
+            
+            # Trik biar label ROAS gak kepotong di atas grafik
+            max_y = summary_melted['Value'].max()
+            fig_bar.update_layout(
+                yaxis_range=[0, max_y * 1.2], # Tambah ruang kosong 20% di atas
+                margin=dict(t=50)
+            )
             
             st.plotly_chart(fig_bar, use_container_width=True)
         else:
@@ -270,65 +283,37 @@ if df_final is not None and not df_final.empty:
 
     with tab2:
         col_grafik, col_tabel = st.columns([2, 1])
-        
         if 'Date' in df_filtered.columns:
             daily_agg = df_filtered.groupby(['Date', 'Platform'])[['Revenue']].sum().reset_index()
-            
             with col_grafik:
                 st.write("#### 📈 Grafik Tren Revenue")
-                fig_line = px.line(
-                    daily_agg, x='Date', y='Revenue', color='Platform',
-                    markers=True, title="Pergerakan Omzet per Hari"
-                )
+                fig_line = px.line(daily_agg, x='Date', y='Revenue', color='Platform', markers=True)
                 fig_line.update_layout(legend=dict(orientation="h", y=1.1))
                 st.plotly_chart(fig_line, use_container_width=True)
-            
             with col_tabel:
                 st.write("#### 📋 Data Detail Grafik")
-                st.caption("Nilai omzet per hari (Klik header untuk sort):")
-                
                 pivot_table = daily_agg.pivot(index='Date', columns='Platform', values='Revenue').fillna(0)
                 pivot_table = pivot_table.sort_index(ascending=False)
                 pivot_table.index = pivot_table.index.strftime('%d-%m-%Y')
-                
-                st.dataframe(
-                    pivot_table.style.format("Rp {:,.0f}"), 
-                    use_container_width=True,
-                    height=400
-                )
-        else:
-            st.warning("Data Tanggal tidak tersedia.")
+                st.dataframe(pivot_table.style.format("Rp {:,.0f}"), use_container_width=True, height=400)
 
     with tab3:
         st.write("#### Peta Efisiensi Iklan")
-        
         with st.expander("ℹ️ CARA MEMBACA GRAFIK INI (Klik untuk buka)", expanded=True):
             st.markdown("""
-            Grafik ini memetakan performa iklan ke dalam 4 zona berdasarkan **Biaya (Sumbu X)** dan **Hasil (Sumbu Y)**:
-            
-            | Zona | Posisi di Grafik | Arti Bisnis | Tindakan |
-            | :--- | :--- | :--- | :--- |
-            | **💎 Mutiara Terpendam** | **Kiri Atas** | Biaya Murah, Omzet Tinggi | **Scale Up!** Tambah budget di sini. |
-            | **💰 Mesin Uang** | **Kanan Atas** | Biaya Mahal, Omzet Tinggi | **Maintain.** Ini tulang punggung bisnismu. |
-            | **💀 Zona Boncos** | **Kanan Bawah** | Biaya Mahal, Omzet Kecil | **Matikan/Evaluasi.** Iklan ini merugi. |
-            | **🧪 Eksperimen** | **Kiri Bawah** | Biaya Murah, Omzet Kecil | **Pantau.** Iklan baru atau testing. |
-            
-            *Besar lingkaran = Jumlah Transaksi (Sales).*
+            | Zona | Posisi di Grafik | Arti Bisnis |
+            | :--- | :--- | :--- |
+            | **💎 Mutiara** | **Kiri Atas** | Biaya Murah, Omzet Tinggi |
+            | **💰 Mesin Uang** | **Kanan Atas** | Biaya Mahal, Omzet Tinggi |
+            | **💀 Boncos** | **Kanan Bawah** | Biaya Mahal, Omzet Kecil |
             """)
-
-        if 'Clicks' in df_filtered.columns and 'Conversions' in df_filtered.columns:
+        if 'Clicks' in df_filtered.columns:
             fig_scatter = px.scatter(
-                df_filtered, 
-                x='Spend', y='Revenue', 
-                size='Conversions', color='Platform',
+                df_filtered, x='Spend', y='Revenue', size='Conversions', color='Platform',
                 hover_data=['Campaign'] if 'Campaign' in df_filtered.columns else None,
-                labels={'Spend': 'Biaya Iklan (Cost)', 'Revenue': 'Omzet (Revenue)'},
                 title="Peta Sebaran Efektifitas Iklan"
             )
-            
             st.plotly_chart(fig_scatter, use_container_width=True)
-        else:
-            st.warning("Data tidak cukup untuk Scatter Plot.")
 
     with st.expander("🔍 Lihat Data Mentah Lengkap"):
         st.dataframe(df_filtered.sort_values(by='Date', ascending=False), use_container_width=True)
