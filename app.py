@@ -66,21 +66,20 @@ def process_uploaded_file(uploaded_file):
         detected_platform = None
         
         # --- PERBAIKAN LOGIKA DETEKSI (Swap Order) ---
-        # Cek Meta Ads DULUAN karena kolomnya lebih spesifik ('amount spent')
-        # Ini mencegah Meta Agency (yg punya kolom 'CPC Cost') terdeteksi sebagai Google
-        
         # 1. Deteksi Meta Ads
         if any('amount spent' in c for c in cols) or any('reach' in c for c in cols):
             rename_map = {
                 'Amount Spent (IDR)': 'Spend', 'Amount Spent': 'Spend', 
                 'Website Purchase Conversion Value': 'Revenue', 
                 'Link Clicks': 'Clicks',
-                'CPM (Cost per 1000 Impressions)': 'CPM', # Mapping tambahan biar aman
-                'CPC (Cost per Link Click)': 'CPC'
+                'CPM (Cost per 1000 Impressions)': 'CPM', 
+                'CPC (Cost per Link Click)': 'CPC',
+                'Purchases': 'Conversions',   # <--- FIX: Mapping Purchases ke Conversions biar bola muncul
+                'Campaign Name': 'Campaign'   # <--- FIX: Biar nama campaign muncul saat di-hover
             }
             detected_platform = 'Meta Ads'
             
-        # 2. Deteksi Google Ads (Cek cost/cpc jika bukan Meta)
+        # 2. Deteksi Google Ads
         elif any('cost' in c for c in cols) or any('avg. cpc' in c for c in cols):
             rename_map = {'Day': 'Date', 'Cost': 'Spend', 'Total conv. value': 'Revenue', 'Conv. value': 'Revenue'}
             detected_platform = 'Google Ads'
@@ -143,11 +142,10 @@ elif data_source == "📂 Upload File Manual (CSV)":
         for file in uploaded_files:
             processed = process_uploaded_file(file)
             if processed is not None:
-                # --- LOGIKA LABELING (Tetap sama) ---
+                # --- LOGIKA LABELING ---
                 current_platform = processed['Platform'].iloc[0] if 'Platform' in processed.columns else 'Unknown'
                 fname = file.name.lower()
                 
-                # Hanya ubah label jika terdeteksi sebagai Meta
                 if 'Meta' in current_platform:
                     if 'internal' in fname or 'pixel_1' in fname:
                         processed['Platform'] = 'Meta Ads (Internal)'
@@ -177,7 +175,6 @@ if df_final is not None and not df_final.empty:
         min_d = df_final['Date'].min().date()
         max_d = df_final['Date'].max().date()
         try:
-            # Gunakan try-except untuk handle kasus tanggal yang mungkin error
             if pd.isna(min_d) or pd.isna(max_d):
                 st.sidebar.warning("Format tanggal tidak valid pada data.")
                 df_filtered = df_final
@@ -309,6 +306,7 @@ if df_final is not None and not df_final.empty:
             | **💎 Mutiara** | **Kiri Atas** | Biaya Murah, Omzet Tinggi |
             | **💰 Mesin Uang** | **Kanan Atas** | Biaya Mahal, Omzet Tinggi |
             | **💀 Boncos** | **Kanan Bawah** | Biaya Mahal, Omzet Kecil |
+            | **🧪 Eksperimen** | **Kiri Bawah** | Biaya Murah, Omzet Kecil |
             """)
         if 'Clicks' in df_filtered.columns:
             fig_scatter = px.scatter(
